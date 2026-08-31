@@ -2,6 +2,10 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import base64
+import json
+import re
+from google import genai
 
 
 # ============================================================
@@ -24,8 +28,6 @@ st.markdown(
     """
     <style>
 
-    /* ---------- GENERAL ---------- */
-
     .stApp {
         background-color: #f7f8fc;
     }
@@ -36,8 +38,6 @@ st.markdown(
         padding-bottom: 3rem;
     }
 
-    /* ---------- SIDEBAR ---------- */
-
     [data-testid="stSidebar"] {
         background-color: #111827;
     }
@@ -45,8 +45,6 @@ st.markdown(
     [data-testid="stSidebar"] * {
         color: #ffffff;
     }
-
-    /* ---------- HEADINGS ---------- */
 
     h1 {
         font-size: 2.4rem !important;
@@ -61,8 +59,6 @@ st.markdown(
     h3 {
         font-weight: 700 !important;
     }
-
-    /* ---------- METRICS ---------- */
 
     div[data-testid="stMetric"] {
         background-color: #ffffff;
@@ -80,15 +76,11 @@ st.markdown(
         font-weight: 800;
     }
 
-    /* ---------- BUTTONS ---------- */
-
     .stButton > button {
         border-radius: 12px;
         min-height: 44px;
         font-weight: 700;
     }
-
-    /* ---------- FILE UPLOADER ---------- */
 
     [data-testid="stFileUploader"] {
         background-color: #ffffff;
@@ -97,13 +89,49 @@ st.markdown(
         padding: 15px;
     }
 
-    /* ---------- DATAFRAME ---------- */
-
     [data-testid="stDataFrame"] {
         border-radius: 14px;
     }
 
-    /* ---------- FOOTER ---------- */
+    .ai-card {
+        background: white;
+        padding: 20px;
+        border-radius: 18px;
+        border: 1px solid #e5e7eb;
+        box-shadow: 0 5px 18px rgba(15,23,42,0.05);
+        margin-bottom: 15px;
+    }
+
+    .ai-badge {
+        display: inline-block;
+        background: #eef2ff;
+        color: #4338ca;
+        padding: 6px 12px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 700;
+        margin-bottom: 8px;
+    }
+
+    .hero-box {
+        background: linear-gradient(
+            135deg,
+            #111827,
+            #312e81
+        );
+        color: white;
+        padding: 32px;
+        border-radius: 24px;
+        margin-bottom: 25px;
+    }
+
+    .hero-box h2 {
+        color: white !important;
+    }
+
+    .hero-box p {
+        color: #e5e7eb;
+    }
 
     .footer-text {
         text-align: center;
@@ -123,11 +151,354 @@ st.markdown(
 # SESSION STATE
 # ============================================================
 
-if "uploaded_image" not in st.session_state:
-    st.session_state.uploaded_image = None
+defaults = {
+    "uploaded_image": None,
+    "catalogue_generated": False,
+    "ai_result": None,
+    "ai_description": "",
+    "ai_hindi": "",
+    "ai_kannada": "",
+    "ai_product_name": "",
+    "ai_category": "",
+    "ai_material": "",
+    "ai_craft": "",
+    "ai_price": None,
+    "ai_keywords": [],
+    "translation_result": ""
+}
 
-if "catalogue_generated" not in st.session_state:
-    st.session_state.catalogue_generated = False
+for key, value in defaults.items():
+    if key not in st.session_state:
+        st.session_state[key] = value
+
+
+# ============================================================
+# GEMINI CONFIGURATION
+# ============================================================
+
+@st.cache_resource
+def get_gemini_client():
+    """
+    Creates Gemini client using Streamlit Secrets.
+    API key is never displayed or committed to GitHub.
+    """
+
+    try:
+        api_key = st.secrets["GEMINI_API_KEY"]
+    except Exception:
+        return None
+
+    if not api_key:
+        return None
+
+    return genai.Client(api_key=api_key)
+
+
+def get_ai_client():
+    return get_gemini_client()
+
+
+# ============================================================
+# GEMINI IMAGE ANALYSIS
+# ============================================================
+
+def analyze_product_image(uploaded_file):
+
+    client = get_ai_client()
+
+    if client is None:
+        return {
+            "error": (
+                "GEMINI_API_KEY is missing. "
+                "Add it under Streamlit Cloud → Settings → Secrets."
+            )
+        }
+
+    try:
+
+        image_bytes = uploaded_file.getvalue()
+
+        mime_type = uploaded_file.type or "image/jpeg"
+
+        image_b64 = base64.b64encode(
+            image_bytes
+        ).decode("utf-8")
+
+        prompt = """
+You are an expert artisan-commerce AI assistant.
+
+Analyze the uploaded handmade product image.
+
+IMPORTANT:
+Do not invent exact facts that cannot be visually confirmed.
+If something is uncertain, clearly mark it as "Likely" or "Estimated".
+
+Return ONLY valid JSON with this structure:
+
+{
+  "product_name": "",
+  "category": "",
+  "craft_type": "",
+  "material": "",
+  "colors": [],
+  "visual_features": [],
+  "cultural_context": "",
+  "target_customer": "",
+  "description": "",
+  "short_description": "",
+  "seo_keywords": [],
+  "estimated_price_min": 0,
+  "estimated_price_max": 0,
+  "pricing_reason": ""
+}
+
+The description should be professional and suitable for
+an Indian e-commerce marketplace.
+
+Mention craftsmanship, visible design characteristics,
+possible material and cultural relevance where appropriate.
+
+Do not claim certification, geographic origin,
+traditional status or material composition unless supported
+by the image or user-provided information.
+"""
+
+        interaction = client.interactions.create(
+            model="gemini-3.6-flash",
+            input=[
+                {
+                    "type": "image",
+                    "data": image_b64,
+                    "mime_type": mime_type
+                },
+                {
+                    "type": "text",
+                    "text": prompt
+                }
+            ]
+        )
+
+        text = interaction.output_text.strip()
+
+        # Remove markdown JSON fences if Gemini returns them.
+        text = re.sub(
+            r"^```json\s*",
+            "",
+            text,
+            flags=re.IGNORECASE
+        )
+
+        text = re.sub(
+            r"\s*```$",
+            "",
+            text
+        )
+
+        result = json.loads(text)
+
+        return result
+
+    except Exception as e:
+
+        return {
+            "error": f"AI analysis failed: {str(e)}"
+        }
+
+
+# ============================================================
+# TEXT GENERATION
+# ============================================================
+
+def generate_catalogue(product_name, description, material, craft):
+
+    client = get_ai_client()
+
+    if client is None:
+        return "Gemini API key is not configured."
+
+    prompt = f"""
+Create a professional e-commerce product listing.
+
+Product:
+{product_name}
+
+Material:
+{material}
+
+Craft:
+{craft}
+
+Existing description:
+{description}
+
+Generate:
+
+1. Professional product title
+2. Short description
+3. Detailed description
+4. 5 SEO keywords
+5. 5 selling points
+
+Target audience:
+Indian and international customers interested in
+handmade artisan products.
+
+Keep the content authentic and do not invent
+unsupported certifications or claims.
+"""
+
+    try:
+
+        interaction = client.interactions.create(
+            model="gemini-3.6-flash",
+            input=prompt
+        )
+
+        return interaction.output_text.strip()
+
+    except Exception as e:
+
+        return f"Catalogue generation failed: {str(e)}"
+
+
+# ============================================================
+# TRANSLATION
+# ============================================================
+
+def translate_text(text, language):
+
+    client = get_ai_client()
+
+    if client is None:
+        return "Gemini API key is not configured."
+
+    prompt = f"""
+Translate the following artisan product description
+into {language}.
+
+Preserve:
+- Product meaning
+- Craft terminology
+- Cultural context
+- Professional e-commerce tone
+- Important product details
+
+Do not add unsupported claims.
+
+Text:
+
+{text}
+"""
+
+    try:
+
+        interaction = client.interactions.create(
+            model="gemini-3.6-flash",
+            input=prompt
+        )
+
+        return interaction.output_text.strip()
+
+    except Exception as e:
+
+        return f"Translation failed: {str(e)}"
+
+
+# ============================================================
+# AI PRICING
+# ============================================================
+
+def ai_price_estimate(
+    product_name,
+    material,
+    craft,
+    description,
+    material_cost,
+    labour_cost,
+    packaging,
+    margin
+):
+
+    client = get_ai_client()
+
+    if client is None:
+        return None
+
+    prompt = f"""
+You are an artisan-commerce pricing assistant.
+
+Product:
+{product_name}
+
+Material:
+{material}
+
+Craft:
+{craft}
+
+Description:
+{description}
+
+Raw material cost:
+₹{material_cost}
+
+Labour cost:
+₹{labour_cost}
+
+Packaging:
+₹{packaging}
+
+Desired profit margin:
+{margin}%
+
+Suggest a reasonable selling price range.
+
+Consider:
+- craftsmanship
+- labour intensity
+- material
+- handmade value
+- product positioning
+- sustainable artisan income
+
+Do not claim to have real-time market data.
+
+Return ONLY JSON:
+
+{{
+  "recommended_price": 0,
+  "minimum_price": 0,
+  "maximum_price": 0,
+  "reason": ""
+}}
+"""
+
+    try:
+
+        interaction = client.interactions.create(
+            model="gemini-3.6-flash",
+            input=prompt
+        )
+
+        text = interaction.output_text.strip()
+
+        text = re.sub(
+            r"^```json\s*",
+            "",
+            text,
+            flags=re.IGNORECASE
+        )
+
+        text = re.sub(
+            r"\s*```$",
+            "",
+            text
+        )
+
+        return json.loads(text)
+
+    except Exception:
+        return None
 
 
 # ============================================================
@@ -140,7 +511,10 @@ with st.sidebar:
 
     st.caption("AI-powered artisan commerce")
 
-    st.success("● Prototype Online")
+    if get_ai_client():
+        st.success("● AI Connected")
+    else:
+        st.warning("● AI Not Connected")
 
     st.divider()
 
@@ -165,16 +539,21 @@ with st.sidebar:
 
     st.write("🟢 Product Management")
     st.write("🟢 Catalogue Engine")
-    st.write("🟡 AI Vision")
-    st.write("🟡 Translation")
-    st.write("🟡 Market Intelligence")
-    st.write("🟡 Buyer Matching")
+
+    if get_ai_client():
+        st.write("🟢 AI Vision")
+        st.write("🟢 Translation")
+        st.write("🟢 AI Pricing")
+    else:
+        st.write("🟡 AI Vision")
+        st.write("🟡 Translation")
+        st.write("🟡 AI Pricing")
 
     st.divider()
 
     st.caption("SIH26090")
     st.caption("ArtisanLink Prototype")
-    st.caption("Phase 1 • UI")
+    st.caption("AI Commerce Platform")
 
 
 # ============================================================
@@ -183,19 +562,18 @@ with st.sidebar:
 
 if selected_page == "🏠 Dashboard":
 
-    st.title("🧵 ArtisanLink")
-
-    st.write(
-        "Digital commerce infrastructure for traditional artisans."
+    st.markdown(
+        """
+        <div class="hero-box">
+            <h2>🧵 ArtisanLink AI</h2>
+            <p>
+            AI-powered digital commerce infrastructure
+            helping traditional artisans reach wider markets.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True
     )
-
-    st.divider()
-
-    # --------------------------------------------------------
-    # TOP METRICS
-    # --------------------------------------------------------
-
-    st.subheader("Platform Overview")
 
     m1, m2, m3, m4 = st.columns(4)
 
@@ -224,10 +602,6 @@ if selected_page == "🏠 Dashboard":
     )
 
     st.write("")
-
-    # --------------------------------------------------------
-    # MAIN DASHBOARD
-    # --------------------------------------------------------
 
     left, right = st.columns(
         [1.7, 1],
@@ -325,8 +699,7 @@ if selected_page == "🏠 Dashboard":
                 r=5,
                 t=20,
                 b=5
-            ),
-            showlegend=True
+            )
         )
 
         st.plotly_chart(
@@ -334,49 +707,38 @@ if selected_page == "🏠 Dashboard":
             use_container_width=True
         )
 
-    # --------------------------------------------------------
-    # WORKFLOW
-    # --------------------------------------------------------
-
     st.divider()
 
-    st.subheader("🚀 ArtisanLink Workflow")
+    st.subheader("🚀 ArtisanLink AI Workflow")
 
     w1, w2, w3, w4, w5 = st.columns(5)
 
-    with w1:
-        with st.container(border=True):
-            st.markdown("### 01")
-            st.markdown("📷 **Capture**")
-            st.caption("Upload product image")
+    workflow = [
+        ("01", "📷", "Capture", "Upload product"),
+        ("02", "🤖", "Analyze", "AI understands craft"),
+        ("03", "📝", "Catalogue", "Generate listing"),
+        ("04", "💰", "Price", "AI pricing"),
+        ("05", "🌍", "Connect", "Reach markets")
+    ]
 
-    with w2:
-        with st.container(border=True):
-            st.markdown("### 02")
-            st.markdown("🤖 **Analyze**")
-            st.caption("AI understands the craft")
+    for col, item in zip(
+        [w1, w2, w3, w4, w5],
+        workflow
+    ):
 
-    with w3:
-        with st.container(border=True):
-            st.markdown("### 03")
-            st.markdown("📝 **Catalogue**")
-            st.caption("Create digital listing")
+        with col:
 
-    with w4:
-        with st.container(border=True):
-            st.markdown("### 04")
-            st.markdown("💰 **Price**")
-            st.caption("Estimate selling price")
+            with st.container(border=True):
 
-    with w5:
-        with st.container(border=True):
-            st.markdown("### 05")
-            st.markdown("🌍 **Connect**")
-            st.caption("Reach new markets")
+                st.markdown(
+                    f"### {item[0]}"
+                )
 
-    # --------------------------------------------------------
-    # IMPACT
-    # --------------------------------------------------------
+                st.markdown(
+                    f"### {item[1]} {item[2]}"
+                )
+
+                st.caption(item[3])
 
     st.divider()
 
@@ -384,44 +746,36 @@ if selected_page == "🏠 Dashboard":
 
     i1, i2, i3 = st.columns(3)
 
-    with i1:
+    impact = [
+        (
+            "🧑‍🎨",
+            "Empower Artisans",
+            "Reduce the technical barrier for artisans entering digital commerce."
+        ),
+        (
+            "🌐",
+            "Expand Market Access",
+            "Create a continuous digital sales channel beyond physical fairs."
+        ),
+        (
+            "💰",
+            "Improve Income",
+            "Support better product descriptions, pricing and market decisions."
+        )
+    ]
 
-        with st.container(border=True):
+    for col, item in zip(
+        [i1, i2, i3],
+        impact
+    ):
 
-            st.markdown("### 🧑‍🎨")
+        with col:
 
-            st.markdown("### Empower Artisans")
+            with st.container(border=True):
 
-            st.write(
-                "Reduce the technical barrier for artisans "
-                "entering digital commerce."
-            )
-
-    with i2:
-
-        with st.container(border=True):
-
-            st.markdown("### 🌐")
-
-            st.markdown("### Expand Market Access")
-
-            st.write(
-                "Create a continuous digital sales channel "
-                "beyond physical fairs."
-            )
-
-    with i3:
-
-        with st.container(border=True):
-
-            st.markdown("### 💰")
-
-            st.markdown("### Improve Income")
-
-            st.write(
-                "Help artisans make better pricing and "
-                "market decisions."
-            )
+                st.markdown(f"### {item[0]}")
+                st.markdown(f"### {item[1]}")
+                st.write(item[2])
 
 
 # ============================================================
@@ -433,15 +787,11 @@ elif selected_page == "📸 AI Product Studio":
     st.title("📸 AI Product Studio")
 
     st.write(
-        "Transform a simple product photograph into "
-        "structured digital product intelligence."
+        "Upload a handmade product and let Gemini create "
+        "structured product intelligence."
     )
 
     st.divider()
-
-    # --------------------------------------------------------
-    # IMAGE AREA
-    # --------------------------------------------------------
 
     image_col, analysis_col = st.columns(
         [1.15, 0.85],
@@ -450,7 +800,7 @@ elif selected_page == "📸 AI Product Studio":
 
     with image_col:
 
-        st.subheader("Product Image")
+        st.subheader("📷 Product Image")
 
         uploaded = st.file_uploader(
             "Upload your artisan product",
@@ -459,8 +809,7 @@ elif selected_page == "📸 AI Product Studio":
                 "jpeg",
                 "png",
                 "webp"
-            ],
-            help="Upload a clear photograph of your handmade product."
+            ]
         )
 
         if uploaded:
@@ -473,26 +822,78 @@ elif selected_page == "📸 AI Product Studio":
                 use_container_width=True
             )
 
-            st.button(
-                "✨ Analyze Product",
+            analyze_clicked = st.button(
+                "✨ Analyze Product with AI",
                 type="primary",
-                use_container_width=True,
-                disabled=True
+                use_container_width=True
             )
 
-            st.caption(
-                "AI Vision will be activated in Phase 2."
-            )
+            if analyze_clicked:
+
+                if not get_ai_client():
+
+                    st.error(
+                        "Gemini API is not configured. "
+                        "Please check Streamlit Secrets."
+                    )
+
+                else:
+
+                    with st.spinner(
+                        "🤖 Gemini is analyzing your product..."
+                    ):
+
+                        result = analyze_product_image(
+                            uploaded
+                        )
+
+                    if "error" in result:
+
+                        st.error(result["error"])
+
+                    else:
+
+                        st.session_state.ai_result = result
+
+                        st.session_state.ai_product_name = result.get(
+                            "product_name",
+                            ""
+                        )
+
+                        st.session_state.ai_category = result.get(
+                            "category",
+                            ""
+                        )
+
+                        st.session_state.ai_material = result.get(
+                            "material",
+                            ""
+                        )
+
+                        st.session_state.ai_craft = result.get(
+                            "craft_type",
+                            ""
+                        )
+
+                        st.session_state.ai_description = result.get(
+                            "description",
+                            ""
+                        )
+
+                        st.session_state.ai_keywords = result.get(
+                            "seo_keywords",
+                            []
+                        )
+
+                        st.success(
+                            "✅ AI analysis completed!"
+                        )
 
         else:
 
             st.info(
                 "📷 Upload a product photograph to begin."
             )
-
-    # --------------------------------------------------------
-    # AI PIPELINE
-    # --------------------------------------------------------
 
     with analysis_col:
 
@@ -526,59 +927,140 @@ elif selected_page == "📸 AI Product Studio":
                     st.write(f"**{title}**")
 
     # --------------------------------------------------------
-    # FEATURES
+    # AI RESULTS
     # --------------------------------------------------------
 
-    st.divider()
+    if st.session_state.ai_result:
 
-    st.subheader("✨ Product Intelligence")
+        result = st.session_state.ai_result
 
-    f1, f2, f3 = st.columns(3)
+        st.divider()
 
-    with f1:
+        st.subheader("🤖 AI Product Intelligence")
 
-        with st.container(border=True):
+        r1, r2, r3, r4 = st.columns(4)
 
-            st.markdown("### 🔎 Recognition")
+        r1.metric(
+            "Product",
+            result.get("product_name", "Unknown")
+        )
 
-            st.write(
-                "Identify product category, craft type and "
-                "visible materials."
+        r2.metric(
+            "Category",
+            result.get("category", "Unknown")
+        )
+
+        r3.metric(
+            "Material",
+            result.get("material", "Unknown")
+        )
+
+        r4.metric(
+            "Craft",
+            result.get("craft_type", "Unknown")
+        )
+
+        st.divider()
+
+        info1, info2 = st.columns(2)
+
+        with info1:
+
+            st.subheader("🎨 Visual Features")
+
+            for feature in result.get(
+                "visual_features",
+                []
+            ):
+
+                st.write(f"• {feature}")
+
+            st.subheader("🎨 Colors")
+
+            colors = result.get(
+                "colors",
+                []
             )
 
-            st.progress(0.95)
+            if colors:
+                st.write(", ".join(colors))
 
-            st.caption("Vision capability • Planned")
+        with info2:
 
-    with f2:
-
-        with st.container(border=True):
-
-            st.markdown("### 📝 Content")
+            st.subheader("👥 Target Customer")
 
             st.write(
-                "Automatically create professional "
-                "e-commerce descriptions."
+                result.get(
+                    "target_customer",
+                    "Not available"
+                )
             )
 
-            st.progress(0.90)
-
-            st.caption("NLP capability • Planned")
-
-    with f3:
-
-        with st.container(border=True):
-
-            st.markdown("### 🛒 Marketplace")
+            st.subheader("🏛️ Cultural Context")
 
             st.write(
-                "Prepare products for digital marketplaces "
-                "and online discovery."
+                result.get(
+                    "cultural_context",
+                    "Not available"
+                )
             )
 
-            st.progress(0.85)
+        st.divider()
 
-            st.caption("Commerce capability • Planned")
+        st.subheader("📝 AI-Generated Description")
+
+        st.write(
+            result.get(
+                "description",
+                "No description generated."
+            )
+        )
+
+        st.subheader("🔎 SEO Keywords")
+
+        keywords = result.get(
+            "seo_keywords",
+            []
+        )
+
+        if keywords:
+
+            st.write(
+                " • ".join(
+                    [str(x) for x in keywords]
+                )
+            )
+
+        st.divider()
+
+        st.subheader("💰 AI Price Estimate")
+
+        p1, p2, p3 = st.columns(3)
+
+        p1.metric(
+            "Minimum",
+            f"₹{result.get('estimated_price_min', 0):,.0f}"
+        )
+
+        p2.metric(
+            "Suggested",
+            f"₹{(
+                result.get('estimated_price_min', 0)
+                + result.get('estimated_price_max', 0)
+            ) / 2:,.0f}"
+        )
+
+        p3.metric(
+            "Maximum",
+            f"₹{result.get('estimated_price_max', 0):,.0f}"
+        )
+
+        st.info(
+            result.get(
+                "pricing_reason",
+                "AI pricing estimate."
+            )
+        )
 
 
 # ============================================================
@@ -590,8 +1072,7 @@ elif selected_page == "📝 Smart Catalogue":
     st.title("📝 Smart Catalogue")
 
     st.write(
-        "Create structured product listings and prepare "
-        "them for multilingual digital commerce."
+        "Create multilingual professional product listings."
     )
 
     st.divider()
@@ -615,15 +1096,13 @@ elif selected_page == "📝 Smart Catalogue":
 
         product_name = st.text_input(
             "Product Name",
+            value=st.session_state.ai_product_name,
             placeholder="Example: Handcrafted Bamboo Basket"
         )
 
         description = st.text_area(
             "Product Description",
-            placeholder=(
-                "Describe the product, materials, "
-                "craftsmanship and cultural significance..."
-            ),
+            value=st.session_state.ai_description,
             height=170
         )
 
@@ -631,15 +1110,17 @@ elif selected_page == "📝 Smart Catalogue":
 
         with c1:
 
-            st.text_input(
+            material = st.text_input(
                 "Material",
+                value=st.session_state.ai_material,
                 placeholder="Bamboo"
             )
 
         with c2:
 
-            st.text_input(
+            craft = st.text_input(
                 "Craft Type",
+                value=st.session_state.ai_craft,
                 placeholder="Traditional Bamboo Craft"
             )
 
@@ -647,7 +1128,7 @@ elif selected_page == "📝 Smart Catalogue":
 
         with c3:
 
-            st.selectbox(
+            category = st.selectbox(
                 "Product Category",
                 [
                     "Bamboo Handicraft",
@@ -661,7 +1142,7 @@ elif selected_page == "📝 Smart Catalogue":
 
         with c4:
 
-            st.selectbox(
+            target_market = st.selectbox(
                 "Target Market",
                 [
                     "Local",
@@ -671,16 +1152,41 @@ elif selected_page == "📝 Smart Catalogue":
                 ]
             )
 
-        st.button(
+        if st.button(
             "✨ Generate Professional Catalogue",
             type="primary",
-            use_container_width=True,
-            disabled=True
-        )
+            use_container_width=True
+        ):
 
-        st.caption(
-            "AI catalogue generation will be connected in Phase 2."
-        )
+            with st.spinner(
+                "🤖 Creating professional catalogue..."
+            ):
+
+                generated = generate_catalogue(
+                    product_name,
+                    description,
+                    material,
+                    craft
+                )
+
+            st.session_state.catalogue_generated = True
+            st.session_state.ai_description = generated
+
+            st.success(
+                "Catalogue generated successfully!"
+            )
+
+        if st.session_state.catalogue_generated:
+
+            st.divider()
+
+            st.subheader(
+                "📦 Generated Marketplace Listing"
+            )
+
+            st.write(
+                st.session_state.ai_description
+            )
 
     # --------------------------------------------------------
     # HINDI
@@ -690,20 +1196,40 @@ elif selected_page == "📝 Smart Catalogue":
 
         st.subheader("🇮🇳 Hindi Catalogue")
 
-        st.info(
-            "Hindi AI translation will be connected in Phase 2."
-        )
+        source_text = st.session_state.ai_description
 
-        st.text_input(
-            "Hindi Product Name",
-            placeholder="AI-generated Hindi name"
-        )
+        if source_text:
 
-        st.text_area(
-            "Hindi Description",
-            placeholder="AI-generated Hindi description",
-            height=180
-        )
+            if st.button(
+                "🇮🇳 Generate Hindi Translation",
+                type="primary",
+                use_container_width=True
+            ):
+
+                with st.spinner(
+                    "Translating to Hindi..."
+                ):
+
+                    translated = translate_text(
+                        source_text,
+                        "Hindi"
+                    )
+
+                st.session_state.ai_hindi = translated
+
+        else:
+
+            st.info(
+                "First generate an English catalogue."
+            )
+
+        if st.session_state.ai_hindi:
+
+            st.text_area(
+                "Hindi Description",
+                value=st.session_state.ai_hindi,
+                height=300
+            )
 
     # --------------------------------------------------------
     # KANNADA
@@ -713,20 +1239,40 @@ elif selected_page == "📝 Smart Catalogue":
 
         st.subheader("🇮🇳 Kannada Catalogue")
 
-        st.info(
-            "Kannada AI translation will be connected in Phase 2."
-        )
+        source_text = st.session_state.ai_description
 
-        st.text_input(
-            "Kannada Product Name",
-            placeholder="AI-generated Kannada name"
-        )
+        if source_text:
 
-        st.text_area(
-            "Kannada Description",
-            placeholder="AI-generated Kannada description",
-            height=180
-        )
+            if st.button(
+                "🇮🇳 Generate Kannada Translation",
+                type="primary",
+                use_container_width=True
+            ):
+
+                with st.spinner(
+                    "Translating to Kannada..."
+                ):
+
+                    translated = translate_text(
+                        source_text,
+                        "Kannada"
+                    )
+
+                st.session_state.ai_kannada = translated
+
+        else:
+
+            st.info(
+                "First generate an English catalogue."
+            )
+
+        if st.session_state.ai_kannada:
+
+            st.text_area(
+                "Kannada Description",
+                value=st.session_state.ai_kannada,
+                height=300
+            )
 
     # --------------------------------------------------------
     # LANGUAGES
@@ -751,31 +1297,18 @@ elif selected_page == "📝 Smart Catalogue":
                     "Odia",
                     "Punjabi"
                 ],
-                "Translation": [
-                    "Planned",
-                    "Planned",
-                    "Planned",
-                    "Planned",
-                    "Planned",
-                    "Planned",
-                    "Planned",
-                    "Planned",
-                    "Planned",
-                    "Planned",
-                    "Planned"
-                ],
-                "E-Commerce Ready": [
-                    "Yes",
-                    "Yes",
-                    "Yes",
-                    "Yes",
-                    "Yes",
-                    "Yes",
-                    "Yes",
-                    "Yes",
-                    "Yes",
-                    "Yes",
-                    "Yes"
+                "AI Translation": [
+                    "Available",
+                    "Available",
+                    "Available",
+                    "Available",
+                    "Available",
+                    "Available",
+                    "Available",
+                    "Available",
+                    "Available",
+                    "Available",
+                    "Available"
                 ]
             }
         )
@@ -785,6 +1318,55 @@ elif selected_page == "📝 Smart Catalogue":
             use_container_width=True,
             hide_index=True
         )
+
+        st.divider()
+
+        selected_language = st.selectbox(
+            "Translate catalogue to",
+            [
+                "Tamil",
+                "Telugu",
+                "Malayalam",
+                "Bengali",
+                "Assamese",
+                "Marathi",
+                "Gujarati",
+                "Odia",
+                "Punjabi"
+            ]
+        )
+
+        if st.button(
+            "🌐 Translate",
+            use_container_width=True
+        ):
+
+            if not st.session_state.ai_description:
+
+                st.warning(
+                    "Generate an English catalogue first."
+                )
+
+            else:
+
+                with st.spinner(
+                    f"Translating to {selected_language}..."
+                ):
+
+                    translation = translate_text(
+                        st.session_state.ai_description,
+                        selected_language
+                    )
+
+                st.session_state.translation_result = translation
+
+        if st.session_state.translation_result:
+
+            st.text_area(
+                f"{selected_language} Translation",
+                value=st.session_state.translation_result,
+                height=300
+            )
 
 
 # ============================================================
@@ -796,8 +1378,8 @@ elif selected_page == "💰 Dynamic Pricing":
     st.title("💰 Dynamic Pricing Assistant")
 
     st.write(
-        "Estimate a sustainable selling price using "
-        "production cost, labour and desired margin."
+        "Combine production economics with AI-assisted "
+        "artisan pricing."
     )
 
     st.divider()
@@ -847,6 +1429,11 @@ elif selected_page == "💰 Dynamic Pricing":
             step=0.1
         )
 
+        ai_pricing = st.checkbox(
+            "🤖 Use Gemini AI pricing assistance",
+            value=True
+        )
+
     production_cost = (
         material_cost
         + labour_cost
@@ -855,18 +1442,89 @@ elif selected_page == "💰 Dynamic Pricing":
 
     profit = production_cost * margin / 100
 
-    recommended_price = (
+    formula_price = (
         production_cost + profit
     ) * demand_factor
 
+    ai_result = None
+
+    if ai_pricing:
+
+        if st.button(
+            "✨ Analyze Price with AI",
+            type="primary",
+            use_container_width=True
+        ):
+
+            with st.spinner(
+                "🤖 Gemini is evaluating artisan pricing..."
+            ):
+
+                ai_result = ai_price_estimate(
+                    st.session_state.ai_product_name
+                    or "Handmade Artisan Product",
+                    st.session_state.ai_material
+                    or "Not specified",
+                    st.session_state.ai_craft
+                    or "Traditional handmade craft",
+                    st.session_state.ai_description
+                    or "Handmade artisan product",
+                    material_cost,
+                    labour_cost,
+                    packaging,
+                    margin
+                )
+
+            if ai_result:
+
+                st.session_state.ai_price = ai_result
+
     with result_col:
 
-        st.subheader("AI Pricing Preview")
+        st.subheader("💰 Pricing Preview")
 
-        st.metric(
-            "Recommended Selling Price",
-            f"₹{recommended_price:,.0f}"
-        )
+        if st.session_state.ai_price:
+
+            result = st.session_state.ai_price
+
+            st.metric(
+                "AI Recommended Price",
+                f"₹{result.get('recommended_price', 0):,.0f}"
+            )
+
+            p1, p2 = st.columns(2)
+
+            with p1:
+
+                st.metric(
+                    "Minimum",
+                    f"₹{result.get('minimum_price', 0):,.0f}"
+                )
+
+            with p2:
+
+                st.metric(
+                    "Maximum",
+                    f"₹{result.get('maximum_price', 0):,.0f}"
+                )
+
+            st.info(
+                result.get(
+                    "reason",
+                    "AI pricing recommendation."
+                )
+            )
+
+        else:
+
+            st.metric(
+                "Formula Price",
+                f"₹{formula_price:,.0f}"
+            )
+
+            st.caption(
+                "Generate an AI recommendation for a richer pricing analysis."
+            )
 
         r1, r2 = st.columns(2)
 
@@ -881,15 +1539,8 @@ elif selected_page == "💰 Dynamic Pricing":
 
             st.metric(
                 "Estimated Profit",
-                f"₹{recommended_price - production_cost:,.0f}"
+                f"₹{formula_price - production_cost:,.0f}"
             )
-
-        st.success(
-            "✓ Material considered\n\n"
-            "✓ Labour considered\n\n"
-            "✓ Packaging considered\n\n"
-            "✓ Desired margin considered"
-        )
 
     st.divider()
 
@@ -941,8 +1592,8 @@ elif selected_page == "💰 Dynamic Pricing":
     )
 
     st.warning(
-        "Prototype calculation. Live market prices and "
-        "ML-based pricing will be connected in Phase 2."
+        "AI pricing is an advisory estimate. It does not represent "
+        "live market pricing unless connected to a verified market dataset."
     )
 
 
@@ -1281,5 +1932,5 @@ st.caption(
 )
 
 st.caption(
-    "Phase 1 UI Prototype • AI integration will be added next"
+    "Gemini-powered AI • Vision • Catalogue • Translation • Pricing"
 )
