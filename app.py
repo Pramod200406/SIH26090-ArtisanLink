@@ -1,96 +1,133 @@
-import os
-import json
 import streamlit as st
-from google import genai
-from google.genai import types
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+
 
 # ============================================================
-# PAGE CONFIG
+# PAGE CONFIGURATION
 # ============================================================
 
 st.set_page_config(
     page_title="ArtisanLink AI",
     page_icon="🧵",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# ============================================================
-# API CONFIG
-# ============================================================
-
-API_KEY = os.environ.get("GEMINI_API_KEY")
 
 # ============================================================
-# AI PRODUCT ANALYSIS
+# THEME / CSS
 # ============================================================
 
-def analyze_product(image_bytes, mime_type):
+st.markdown(
+    """
+    <style>
 
-    client = genai.Client(api_key=API_KEY)
+    /* ---------- GENERAL ---------- */
 
-    prompt = """
-You are an AI assistant for an Indian artisan marketplace.
+    .stApp {
+        background-color: #f7f8fc;
+    }
 
-Analyze the uploaded product image carefully.
+    .block-container {
+        max-width: 1500px;
+        padding-top: 1.5rem;
+        padding-bottom: 3rem;
+    }
 
-The product must be classified into ONE of these categories:
+    /* ---------- SIDEBAR ---------- */
 
-- Pottery
-- Bamboo Handicraft
-- Traditional Textile
-- Jewellery
-- Wooden Handicraft
-- Leather Product
-- Other
+    [data-testid="stSidebar"] {
+        background-color: #111827;
+    }
 
-Return ONLY valid JSON.
+    [data-testid="stSidebar"] * {
+        color: #ffffff;
+    }
 
-Required format:
+    /* ---------- HEADINGS ---------- */
 
-{
-    "category": "Pottery",
-    "product_name": "Traditional Handmade Clay Pot",
-    "material": "Clay",
-    "craft_type": "Traditional pottery",
-    "description": "A short professional marketplace description.",
-    "confidence": 95,
-    "keywords": ["handmade", "pottery", "artisan"],
-    "target_markets": ["Home Decor", "Tourist Market"],
-    "suggested_price": 850
-}
+    h1 {
+        font-size: 2.4rem !important;
+        font-weight: 800 !important;
+        letter-spacing: -1px;
+    }
 
-IMPORTANT:
+    h2 {
+        font-weight: 750 !important;
+    }
 
-1. Look at the actual image.
-2. Do NOT randomly select a category.
-3. If it is clearly bamboo, select Bamboo Handicraft.
-4. If it is clearly pottery, select Pottery.
-5. If it is clearly textile, select Traditional Textile.
-6. Confidence must be between 0 and 100.
-7. Price must be in Indian Rupees.
-8. Keep the description suitable for an online marketplace.
-"""
+    h3 {
+        font-weight: 700 !important;
+    }
 
-    response = client.models.generate_content(
-        model="gemini-3.6-flash",
-        contents=[
-            types.Part.from_bytes(
-                data=image_bytes,
-                mime_type=mime_type
-            ),
-            prompt
-        ]
-    )
+    /* ---------- METRICS ---------- */
 
-    text = response.text.strip()
+    div[data-testid="stMetric"] {
+        background-color: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 18px;
+        padding: 20px;
+        box-shadow: 0 5px 18px rgba(15, 23, 42, 0.05);
+    }
 
-    # Remove markdown formatting if returned
-    if text.startswith("```"):
-        text = text.replace("```json", "")
-        text = text.replace("```", "")
-        text = text.strip()
+    div[data-testid="stMetricLabel"] {
+        font-weight: 600;
+    }
 
-    return json.loads(text)
+    div[data-testid="stMetricValue"] {
+        font-weight: 800;
+    }
+
+    /* ---------- BUTTONS ---------- */
+
+    .stButton > button {
+        border-radius: 12px;
+        min-height: 44px;
+        font-weight: 700;
+    }
+
+    /* ---------- FILE UPLOADER ---------- */
+
+    [data-testid="stFileUploader"] {
+        background-color: #ffffff;
+        border: 2px dashed #cbd5e1;
+        border-radius: 18px;
+        padding: 15px;
+    }
+
+    /* ---------- DATAFRAME ---------- */
+
+    [data-testid="stDataFrame"] {
+        border-radius: 14px;
+    }
+
+    /* ---------- FOOTER ---------- */
+
+    .footer-text {
+        text-align: center;
+        color: #94a3b8;
+        padding-top: 40px;
+        padding-bottom: 10px;
+        font-size: 13px;
+    }
+
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+
+# ============================================================
+# SESSION STATE
+# ============================================================
+
+if "uploaded_image" not in st.session_state:
+    st.session_state.uploaded_image = None
+
+if "catalogue_generated" not in st.session_state:
+    st.session_state.catalogue_generated = False
 
 
 # ============================================================
@@ -99,478 +136,1136 @@ IMPORTANT:
 
 with st.sidebar:
 
-    st.title("🧵 ArtisanLink AI")
+    st.markdown("## 🧵 ArtisanLink")
 
-    st.caption("SIH26090 Prototype")
+    st.caption("AI-powered artisan commerce")
 
-    st.divider()
-
-    st.subheader("AI Features")
-
-    st.write("📸 Product Recognition")
-    st.write("✨ AI Product Analysis")
-    st.write("📝 Smart Catalogue")
-    st.write("🌐 Multilingual Listing")
-    st.write("💰 Dynamic Pricing")
-    st.write("🎯 Market Linkage")
-    st.write("🤝 Buyer Matching")
+    st.success("● Prototype Online")
 
     st.divider()
 
-    st.success("AI/ML Prototype Ready")
+    st.markdown("### WORKSPACE")
 
+    selected_page = st.radio(
+        "Navigation",
+        [
+            "🏠 Dashboard",
+            "📸 AI Product Studio",
+            "📝 Smart Catalogue",
+            "💰 Dynamic Pricing",
+            "🎯 Market Intelligence",
+            "🤝 Buyer Matching"
+        ],
+        label_visibility="collapsed"
+    )
 
-# ============================================================
-# HEADER
-# ============================================================
+    st.divider()
 
-st.title("🧵 ArtisanLink AI")
+    st.markdown("### PLATFORM STATUS")
 
-st.subheader(
-    "AI-Powered Digital Business Assistant for Artisans"
-)
+    st.write("🟢 Product Management")
+    st.write("🟢 Catalogue Engine")
+    st.write("🟡 AI Vision")
+    st.write("🟡 Translation")
+    st.write("🟡 Market Intelligence")
+    st.write("🟡 Buyer Matching")
 
-st.write(
-    """
-Transform a simple artisan product photo into a
-professional digital marketplace listing using AI.
-"""
-)
+    st.divider()
 
-st.divider()
+    st.caption("SIH26090")
+    st.caption("ArtisanLink Prototype")
+    st.caption("Phase 1 • UI")
 
 
 # ============================================================
 # DASHBOARD
 # ============================================================
 
-st.header("📊 Artisan Dashboard")
+if selected_page == "🏠 Dashboard":
 
-c1, c2, c3, c4 = st.columns(4)
+    st.title("🧵 ArtisanLink")
 
-c1.metric("Products Listed", "24")
-c2.metric("Catalogue Ready", "18")
-c3.metric("Markets", "7")
-c4.metric("Potential Buyers", "126")
+    st.write(
+        "Digital commerce infrastructure for traditional artisans."
+    )
 
-st.divider()
+    st.divider()
 
+    # --------------------------------------------------------
+    # TOP METRICS
+    # --------------------------------------------------------
 
-# ============================================================
-# IMAGE UPLOAD
-# ============================================================
+    st.subheader("Platform Overview")
 
-st.header("📸 Upload Artisan Product")
+    m1, m2, m3, m4 = st.columns(4)
 
-uploaded_file = st.file_uploader(
-    "Upload a clear product image",
-    type=["jpg", "jpeg", "png", "webp"]
-)
+    m1.metric(
+        "Artisans Connected",
+        "18",
+        "+3 this month"
+    )
 
-if uploaded_file:
+    m2.metric(
+        "Products Listed",
+        "126",
+        "+18"
+    )
 
-    image_bytes = uploaded_file.getvalue()
-    mime_type = uploaded_file.type
+    m3.metric(
+        "Potential Buyers",
+        "342",
+        "+27"
+    )
 
-    left, right = st.columns(2)
+    m4.metric(
+        "Estimated Revenue",
+        "₹2.84L",
+        "+18.6%"
+    )
+
+    st.write("")
+
+    # --------------------------------------------------------
+    # MAIN DASHBOARD
+    # --------------------------------------------------------
+
+    left, right = st.columns(
+        [1.7, 1],
+        gap="large"
+    )
 
     with left:
 
-        st.subheader("Product Image")
+        st.subheader("📈 Product Growth")
 
-        st.image(
-            image_bytes,
+        growth_data = pd.DataFrame(
+            {
+                "Month": [
+                    "Jan",
+                    "Feb",
+                    "Mar",
+                    "Apr",
+                    "May",
+                    "Jun",
+                    "Jul",
+                    "Aug"
+                ],
+                "Products": [
+                    24,
+                    37,
+                    49,
+                    63,
+                    78,
+                    94,
+                    111,
+                    126
+                ]
+            }
+        )
+
+        fig = px.area(
+            growth_data,
+            x="Month",
+            y="Products",
+            markers=True,
+            title="Digital Product Listings"
+        )
+
+        fig.update_layout(
+            height=390,
+            margin=dict(
+                l=10,
+                r=10,
+                t=55,
+                b=10
+            )
+        )
+
+        st.plotly_chart(
+            fig,
             use_container_width=True
         )
 
     with right:
 
-        st.subheader("AI Recognition")
+        st.subheader("🧩 Product Categories")
 
-        st.write(
-            "Click below to identify the artisan product."
+        category_data = pd.DataFrame(
+            {
+                "Category": [
+                    "Bamboo",
+                    "Textile",
+                    "Pottery",
+                    "Jewellery",
+                    "Wood",
+                    "Other"
+                ],
+                "Products": [
+                    31,
+                    28,
+                    22,
+                    17,
+                    15,
+                    13
+                ]
+            }
         )
 
-        analyze_button = st.button(
-            "🤖 Analyze Product",
-            type="primary",
+        fig = px.pie(
+            category_data,
+            names="Category",
+            values="Products",
+            hole=0.55
+        )
+
+        fig.update_layout(
+            height=390,
+            margin=dict(
+                l=5,
+                r=5,
+                t=20,
+                b=5
+            ),
+            showlegend=True
+        )
+
+        st.plotly_chart(
+            fig,
             use_container_width=True
         )
 
-    # ========================================================
-    # ANALYZE
-    # ========================================================
+    # --------------------------------------------------------
+    # WORKFLOW
+    # --------------------------------------------------------
 
-    if analyze_button:
+    st.divider()
 
-        if not API_KEY:
+    st.subheader("🚀 ArtisanLink Workflow")
 
-            st.error(
-                "GEMINI_API_KEY is missing."
+    w1, w2, w3, w4, w5 = st.columns(5)
+
+    with w1:
+        with st.container(border=True):
+            st.markdown("### 01")
+            st.markdown("📷 **Capture**")
+            st.caption("Upload product image")
+
+    with w2:
+        with st.container(border=True):
+            st.markdown("### 02")
+            st.markdown("🤖 **Analyze**")
+            st.caption("AI understands the craft")
+
+    with w3:
+        with st.container(border=True):
+            st.markdown("### 03")
+            st.markdown("📝 **Catalogue**")
+            st.caption("Create digital listing")
+
+    with w4:
+        with st.container(border=True):
+            st.markdown("### 04")
+            st.markdown("💰 **Price**")
+            st.caption("Estimate selling price")
+
+    with w5:
+        with st.container(border=True):
+            st.markdown("### 05")
+            st.markdown("🌍 **Connect**")
+            st.caption("Reach new markets")
+
+    # --------------------------------------------------------
+    # IMPACT
+    # --------------------------------------------------------
+
+    st.divider()
+
+    st.subheader("🌍 Artisan Impact")
+
+    i1, i2, i3 = st.columns(3)
+
+    with i1:
+
+        with st.container(border=True):
+
+            st.markdown("### 🧑‍🎨")
+
+            st.markdown("### Empower Artisans")
+
+            st.write(
+                "Reduce the technical barrier for artisans "
+                "entering digital commerce."
+            )
+
+    with i2:
+
+        with st.container(border=True):
+
+            st.markdown("### 🌐")
+
+            st.markdown("### Expand Market Access")
+
+            st.write(
+                "Create a continuous digital sales channel "
+                "beyond physical fairs."
+            )
+
+    with i3:
+
+        with st.container(border=True):
+
+            st.markdown("### 💰")
+
+            st.markdown("### Improve Income")
+
+            st.write(
+                "Help artisans make better pricing and "
+                "market decisions."
+            )
+
+
+# ============================================================
+# AI PRODUCT STUDIO
+# ============================================================
+
+elif selected_page == "📸 AI Product Studio":
+
+    st.title("📸 AI Product Studio")
+
+    st.write(
+        "Transform a simple product photograph into "
+        "structured digital product intelligence."
+    )
+
+    st.divider()
+
+    # --------------------------------------------------------
+    # IMAGE AREA
+    # --------------------------------------------------------
+
+    image_col, analysis_col = st.columns(
+        [1.15, 0.85],
+        gap="large"
+    )
+
+    with image_col:
+
+        st.subheader("Product Image")
+
+        uploaded = st.file_uploader(
+            "Upload your artisan product",
+            type=[
+                "jpg",
+                "jpeg",
+                "png",
+                "webp"
+            ],
+            help="Upload a clear photograph of your handmade product."
+        )
+
+        if uploaded:
+
+            st.session_state.uploaded_image = uploaded
+
+            st.image(
+                uploaded,
+                caption="Product Preview",
+                use_container_width=True
+            )
+
+            st.button(
+                "✨ Analyze Product",
+                type="primary",
+                use_container_width=True,
+                disabled=True
+            )
+
+            st.caption(
+                "AI Vision will be activated in Phase 2."
             )
 
         else:
 
-            with st.spinner(
-                "AI is analyzing the product..."
-            ):
+            st.info(
+                "📷 Upload a product photograph to begin."
+            )
 
-                try:
+    # --------------------------------------------------------
+    # AI PIPELINE
+    # --------------------------------------------------------
 
-                    result = analyze_product(
-                        image_bytes,
-                        mime_type
-                    )
+    with analysis_col:
 
-                    st.session_state["product"] = result
+        st.subheader("🧠 AI Pipeline")
 
-                    st.success(
-                        "✅ Product analyzed successfully!"
-                    )
+        pipeline = [
+            ("01", "📷", "Image Input"),
+            ("02", "🔍", "Visual Analysis"),
+            ("03", "🏷️", "Craft Classification"),
+            ("04", "🧵", "Material Detection"),
+            ("05", "📝", "Description Generation"),
+            ("06", "💰", "Price Recommendation"),
+            ("07", "🌐", "Marketplace Ready")
+        ]
 
-                except json.JSONDecodeError:
+        for number, icon, title in pipeline:
 
-                    st.error(
-                        "AI returned an unexpected format. "
-                        "Please try the image again."
-                    )
+            with st.container(border=True):
 
-                except Exception as e:
+                p1, p2, p3 = st.columns(
+                    [0.5, 0.7, 3]
+                )
 
-                    st.error(
-                        f"AI analysis failed: {e}"
-                    )
+                with p1:
+                    st.caption(number)
 
+                with p2:
+                    st.markdown(f"### {icon}")
 
-# ============================================================
-# PRODUCT RESULT
-# ============================================================
+                with p3:
+                    st.write(f"**{title}**")
 
-if "product" in st.session_state:
-
-    product = st.session_state["product"]
-
-    st.divider()
-
-    st.header("🤖 AI Product Recognition")
-
-    c1, c2, c3 = st.columns(3)
-
-    with c1:
-
-        st.metric(
-            "Category",
-            product.get("category", "Unknown")
-        )
-
-    with c2:
-
-        st.metric(
-            "Material",
-            product.get("material", "Unknown")
-        )
-
-    with c3:
-
-        confidence = product.get(
-            "confidence",
-            0
-        )
-
-        st.metric(
-            "AI Confidence",
-            f"{confidence}%"
-        )
-
-    st.success(
-        f"Detected Product: **{product.get('product_name', 'Unknown')}**"
-    )
-
-
-    # ========================================================
-    # CATALOGUE
-    # ========================================================
+    # --------------------------------------------------------
+    # FEATURES
+    # --------------------------------------------------------
 
     st.divider()
 
-    st.header("📝 AI Generated Catalogue")
+    st.subheader("✨ Product Intelligence")
 
-    st.subheader(
-        product.get(
-            "product_name",
-            "Artisan Product"
-        )
-    )
+    f1, f2, f3 = st.columns(3)
+
+    with f1:
+
+        with st.container(border=True):
+
+            st.markdown("### 🔎 Recognition")
+
+            st.write(
+                "Identify product category, craft type and "
+                "visible materials."
+            )
+
+            st.progress(0.95)
+
+            st.caption("Vision capability • Planned")
+
+    with f2:
+
+        with st.container(border=True):
+
+            st.markdown("### 📝 Content")
+
+            st.write(
+                "Automatically create professional "
+                "e-commerce descriptions."
+            )
+
+            st.progress(0.90)
+
+            st.caption("NLP capability • Planned")
+
+    with f3:
+
+        with st.container(border=True):
+
+            st.markdown("### 🛒 Marketplace")
+
+            st.write(
+                "Prepare products for digital marketplaces "
+                "and online discovery."
+            )
+
+            st.progress(0.85)
+
+            st.caption("Commerce capability • Planned")
+
+
+# ============================================================
+# SMART CATALOGUE
+# ============================================================
+
+elif selected_page == "📝 Smart Catalogue":
+
+    st.title("📝 Smart Catalogue")
 
     st.write(
-        product.get(
-            "description",
-            ""
-        )
+        "Create structured product listings and prepare "
+        "them for multilingual digital commerce."
     )
-
-    c1, c2 = st.columns(2)
-
-    with c1:
-
-        st.write(
-            "**Material:**",
-            product.get(
-                "material",
-                "Unknown"
-            )
-        )
-
-    with c2:
-
-        st.write(
-            "**Craft Type:**",
-            product.get(
-                "craft_type",
-                "Traditional craft"
-            )
-        )
-
-    st.write("### 🔎 Keywords")
-
-    keywords = product.get(
-        "keywords",
-        []
-    )
-
-    if keywords:
-
-        st.write(
-            " • ".join(keywords)
-        )
-
-
-    # ========================================================
-    # MULTILINGUAL
-    # ========================================================
 
     st.divider()
 
-    st.header("🌐 Multilingual Listing")
-
-    language = st.selectbox(
-        "Select language",
+    tab1, tab2, tab3, tab4 = st.tabs(
         [
-            "English",
-            "Hindi",
-            "Kannada"
+            "🇬🇧 English",
+            "🇮🇳 Hindi",
+            "🇮🇳 Kannada",
+            "🌐 Languages"
         ]
     )
 
-    if language == "English":
+    # --------------------------------------------------------
+    # ENGLISH
+    # --------------------------------------------------------
 
-        st.info(
-            product.get(
-                "description",
-                ""
+    with tab1:
+
+        st.subheader("English Product Listing")
+
+        product_name = st.text_input(
+            "Product Name",
+            placeholder="Example: Handcrafted Bamboo Basket"
+        )
+
+        description = st.text_area(
+            "Product Description",
+            placeholder=(
+                "Describe the product, materials, "
+                "craftsmanship and cultural significance..."
+            ),
+            height=170
+        )
+
+        c1, c2 = st.columns(2)
+
+        with c1:
+
+            st.text_input(
+                "Material",
+                placeholder="Bamboo"
             )
+
+        with c2:
+
+            st.text_input(
+                "Craft Type",
+                placeholder="Traditional Bamboo Craft"
+            )
+
+        c3, c4 = st.columns(2)
+
+        with c3:
+
+            st.selectbox(
+                "Product Category",
+                [
+                    "Bamboo Handicraft",
+                    "Traditional Textile",
+                    "Pottery",
+                    "Jewellery",
+                    "Wooden Handicraft",
+                    "Other"
+                ]
+            )
+
+        with c4:
+
+            st.selectbox(
+                "Target Market",
+                [
+                    "Local",
+                    "Regional",
+                    "National",
+                    "International"
+                ]
+            )
+
+        st.button(
+            "✨ Generate Professional Catalogue",
+            type="primary",
+            use_container_width=True,
+            disabled=True
         )
 
-    elif language == "Hindi":
+        st.caption(
+            "AI catalogue generation will be connected in Phase 2."
+        )
+
+    # --------------------------------------------------------
+    # HINDI
+    # --------------------------------------------------------
+
+    with tab2:
+
+        st.subheader("🇮🇳 Hindi Catalogue")
 
         st.info(
-            "यह एक पारंपरिक हस्तनिर्मित उत्पाद है "
-            "जिसे कुशल कारीगरों द्वारा बनाया गया है।"
+            "Hindi AI translation will be connected in Phase 2."
         )
 
-    elif language == "Kannada":
+        st.text_input(
+            "Hindi Product Name",
+            placeholder="AI-generated Hindi name"
+        )
+
+        st.text_area(
+            "Hindi Description",
+            placeholder="AI-generated Hindi description",
+            height=180
+        )
+
+    # --------------------------------------------------------
+    # KANNADA
+    # --------------------------------------------------------
+
+    with tab3:
+
+        st.subheader("🇮🇳 Kannada Catalogue")
 
         st.info(
-            "ಇದು ನುರಿತ ಕುಶಲಕರ್ಮಿಗಳು ತಯಾರಿಸಿದ "
-            "ಸಾಂಪ್ರದಾಯಿಕ ಕೈಯಿಂದ ಮಾಡಿದ ಉತ್ಪನ್ನವಾಗಿದೆ."
+            "Kannada AI translation will be connected in Phase 2."
+        )
+
+        st.text_input(
+            "Kannada Product Name",
+            placeholder="AI-generated Kannada name"
+        )
+
+        st.text_area(
+            "Kannada Description",
+            placeholder="AI-generated Kannada description",
+            height=180
+        )
+
+    # --------------------------------------------------------
+    # LANGUAGES
+    # --------------------------------------------------------
+
+    with tab4:
+
+        st.subheader("🌐 Regional Language Engine")
+
+        language_data = pd.DataFrame(
+            {
+                "Language": [
+                    "Hindi",
+                    "Kannada",
+                    "Tamil",
+                    "Telugu",
+                    "Malayalam",
+                    "Bengali",
+                    "Assamese",
+                    "Marathi",
+                    "Gujarati",
+                    "Odia",
+                    "Punjabi"
+                ],
+                "Translation": [
+                    "Planned",
+                    "Planned",
+                    "Planned",
+                    "Planned",
+                    "Planned",
+                    "Planned",
+                    "Planned",
+                    "Planned",
+                    "Planned",
+                    "Planned",
+                    "Planned"
+                ],
+                "E-Commerce Ready": [
+                    "Yes",
+                    "Yes",
+                    "Yes",
+                    "Yes",
+                    "Yes",
+                    "Yes",
+                    "Yes",
+                    "Yes",
+                    "Yes",
+                    "Yes",
+                    "Yes"
+                ]
+            }
+        )
+
+        st.dataframe(
+            language_data,
+            use_container_width=True,
+            hide_index=True
         )
 
 
-    # ========================================================
-    # PRICING
-    # ========================================================
+# ============================================================
+# DYNAMIC PRICING
+# ============================================================
+
+elif selected_page == "💰 Dynamic Pricing":
+
+    st.title("💰 Dynamic Pricing Assistant")
+
+    st.write(
+        "Estimate a sustainable selling price using "
+        "production cost, labour and desired margin."
+    )
 
     st.divider()
 
-    st.header("💰 Dynamic Pricing Assistant")
+    input_col, result_col = st.columns(
+        [1, 1],
+        gap="large"
+    )
 
-    c1, c2 = st.columns(2)
+    with input_col:
 
-    with c1:
+        st.subheader("Production Inputs")
 
         material_cost = st.number_input(
-            "Raw Material Cost (₹)",
+            "Raw Material Cost",
             min_value=0,
             value=300,
             step=50
         )
 
-    with c2:
-
         labour_cost = st.number_input(
-            "Labour Cost (₹)",
+            "Labour Cost",
             min_value=0,
-            value=400,
+            value=500,
             step=50
         )
 
-    c1, c2 = st.columns(2)
-
-    with c1:
-
-        profit_margin = st.slider(
-            "Profit Margin (%)",
-            10,
-            100,
-            30
+        packaging = st.number_input(
+            "Packaging & Other Costs",
+            min_value=0,
+            value=100,
+            step=50
         )
 
-    with c2:
+        margin = st.slider(
+            "Desired Profit Margin",
+            min_value=5,
+            max_value=100,
+            value=30
+        )
 
         demand_factor = st.slider(
-            "Market Demand",
-            0.8,
-            1.5,
-            1.0,
-            0.1
+            "Demand Adjustment",
+            min_value=0.5,
+            max_value=2.0,
+            value=1.0,
+            step=0.1
         )
 
-    base_cost = (
-        material_cost +
-        labour_cost
+    production_cost = (
+        material_cost
+        + labour_cost
+        + packaging
     )
 
-    calculated_price = (
-        base_cost *
-        (1 + profit_margin / 100) *
-        demand_factor
-    )
+    profit = production_cost * margin / 100
 
-    ai_price = product.get(
-        "suggested_price",
-        calculated_price
-    )
+    recommended_price = (
+        production_cost + profit
+    ) * demand_factor
 
-    c1, c2 = st.columns(2)
+    with result_col:
 
-    with c1:
+        st.subheader("AI Pricing Preview")
 
         st.metric(
-            "AI Suggested Price",
-            f"₹{ai_price:,.0f}"
+            "Recommended Selling Price",
+            f"₹{recommended_price:,.0f}"
         )
 
-    with c2:
+        r1, r2 = st.columns(2)
 
-        st.metric(
-            "Cost + Margin Price",
-            f"₹{calculated_price:,.0f}"
-        )
+        with r1:
 
-
-    # ========================================================
-    # MARKET LINKAGE
-    # ========================================================
-
-    st.divider()
-
-    st.header("🎯 AI Market Linkage")
-
-    st.write(
-        "Recommended markets based on the product:"
-    )
-
-    markets = product.get(
-        "target_markets",
-        []
-    )
-
-    if markets:
-
-        for market in markets:
-
-            st.success(
-                f"✓ {market}"
+            st.metric(
+                "Production Cost",
+                f"₹{production_cost:,.0f}"
             )
 
-    else:
+        with r2:
 
-        st.info(
-            "No specific markets generated."
-        )
-
-
-    # ========================================================
-    # BUYER MATCHING
-    # ========================================================
-
-    st.divider()
-
-    st.header("🤝 Potential Buyer Matching")
-
-    buyers = [
-        (
-            "Heritage Handicrafts",
-            "Delhi",
-            "92%"
-        ),
-        (
-            "Indian Artisan Store",
-            "Mumbai",
-            "88%"
-        ),
-        (
-            "EcoCraft Retail",
-            "Bengaluru",
-            "85%"
-        )
-    ]
-
-    for buyer, city, score in buyers:
-
-        c1, c2, c3 = st.columns(3)
-
-        with c1:
-
-            st.write(
-                f"**{buyer}**"
+            st.metric(
+                "Estimated Profit",
+                f"₹{recommended_price - production_cost:,.0f}"
             )
-
-        with c2:
-
-            st.write(city)
-
-        with c3:
-
-            st.success(
-                f"Match {score}"
-            )
-
-
-    # ========================================================
-    # FINAL LISTING
-    # ========================================================
-
-    st.divider()
-
-    st.header("🚀 Marketplace Listing")
-
-    if st.button(
-        "Publish AI Generated Listing",
-        type="primary",
-        use_container_width=True
-    ):
 
         st.success(
-            "🎉 Product successfully prepared for marketplace publishing!"
+            "✓ Material considered\n\n"
+            "✓ Labour considered\n\n"
+            "✓ Packaging considered\n\n"
+            "✓ Desired margin considered"
         )
 
-        st.balloons()
+    st.divider()
 
-else:
+    st.subheader("📊 Price Breakdown")
 
-    st.info(
-        "👆 Upload an artisan product image to begin."
+    price_data = pd.DataFrame(
+        {
+            "Component": [
+                "Raw Material",
+                "Labour",
+                "Packaging",
+                "Profit"
+            ],
+            "Amount": [
+                material_cost,
+                labour_cost,
+                packaging,
+                profit
+            ]
+        }
+    )
+
+    fig = px.bar(
+        price_data,
+        x="Component",
+        y="Amount",
+        text="Amount",
+        title="Production Cost Structure"
+    )
+
+    fig.update_traces(
+        texttemplate="₹%{text}",
+        textposition="outside"
+    )
+
+    fig.update_layout(
+        height=430,
+        margin=dict(
+            l=10,
+            r=10,
+            t=60,
+            b=10
+        )
+    )
+
+    st.plotly_chart(
+        fig,
+        use_container_width=True
+    )
+
+    st.warning(
+        "Prototype calculation. Live market prices and "
+        "ML-based pricing will be connected in Phase 2."
+    )
+
+
+# ============================================================
+# MARKET INTELLIGENCE
+# ============================================================
+
+elif selected_page == "🎯 Market Intelligence":
+
+    st.title("🎯 Market Intelligence")
+
+    st.write(
+        "Identify promising markets for traditional "
+        "artisan products."
+    )
+
+    st.divider()
+
+    market_data = pd.DataFrame(
+        {
+            "City": [
+                "Bengaluru",
+                "Guwahati",
+                "Mumbai",
+                "Delhi",
+                "Hyderabad",
+                "Chennai",
+                "Kolkata"
+            ],
+            "Opportunity": [
+                92,
+                88,
+                87,
+                84,
+                79,
+                75,
+                72
+            ],
+            "Demand": [
+                91,
+                86,
+                88,
+                83,
+                77,
+                73,
+                70
+            ]
+        }
+    )
+
+    m1, m2, m3, m4 = st.columns(4)
+
+    m1.metric(
+        "Top Market",
+        "Bengaluru"
+    )
+
+    m2.metric(
+        "Opportunity",
+        "92%"
+    )
+
+    m3.metric(
+        "Demand Index",
+        "91"
+    )
+
+    m4.metric(
+        "Markets Analyzed",
+        "7"
+    )
+
+    st.divider()
+
+    chart_col, table_col = st.columns(
+        [1.4, 1],
+        gap="large"
+    )
+
+    with chart_col:
+
+        st.subheader("📊 Market Opportunity")
+
+        fig = px.bar(
+            market_data.sort_values(
+                "Opportunity",
+                ascending=True
+            ),
+            x="Opportunity",
+            y="City",
+            orientation="h",
+            text="Opportunity"
+        )
+
+        fig.update_traces(
+            textposition="outside"
+        )
+
+        fig.update_layout(
+            height=450,
+            margin=dict(
+                l=10,
+                r=30,
+                t=20,
+                b=10
+            )
+        )
+
+        st.plotly_chart(
+            fig,
+            use_container_width=True
+        )
+
+    with table_col:
+
+        st.subheader("🏆 Market Ranking")
+
+        ranking = market_data.copy()
+
+        ranking.insert(
+            0,
+            "Rank",
+            range(
+                1,
+                len(ranking) + 1
+            )
+        )
+
+        st.dataframe(
+            ranking,
+            use_container_width=True,
+            hide_index=True
+        )
+
+    st.divider()
+
+    st.subheader("🔮 Future AI Recommendations")
+
+    r1, r2, r3 = st.columns(3)
+
+    with r1:
+
+        with st.container(border=True):
+
+            st.markdown("### 📍 Location")
+
+            st.write(
+                "Recommend cities based on product demand "
+                "and customer behaviour."
+            )
+
+    with r2:
+
+        with st.container(border=True):
+
+            st.markdown("### 📦 Product")
+
+            st.write(
+                "Identify which products are most suitable "
+                "for each market."
+            )
+
+    with r3:
+
+        with st.container(border=True):
+
+            st.markdown("### 📈 Trend")
+
+            st.write(
+                "Track market trends and emerging "
+                "customer preferences."
+            )
+
+
+# ============================================================
+# BUYER MATCHING
+# ============================================================
+
+elif selected_page == "🤝 Buyer Matching":
+
+    st.title("🤝 Buyer Matching")
+
+    st.write(
+        "Connect artisan products with potential retailers, "
+        "resellers and customers."
+    )
+
+    st.divider()
+
+    buyers = [
+        {
+            "name": "Heritage Handicrafts",
+            "city": "Delhi",
+            "score": 94,
+            "type": "Traditional handmade products",
+            "orders": 126
+        },
+        {
+            "name": "Indian Artisan Store",
+            "city": "Mumbai",
+            "score": 91,
+            "type": "Premium artisan products",
+            "orders": 98
+        },
+        {
+            "name": "EcoCraft Retail",
+            "city": "Bengaluru",
+            "score": 88,
+            "type": "Sustainable handicrafts",
+            "orders": 83
+        },
+        {
+            "name": "Traditional Arts Hub",
+            "city": "Hyderabad",
+            "score": 83,
+            "type": "Cultural products",
+            "orders": 61
+        }
+    ]
+
+    b1, b2, b3 = st.columns(3)
+
+    b1.metric(
+        "Potential Buyers",
+        "342"
+    )
+
+    b2.metric(
+        "High Match",
+        "48"
+    )
+
+    b3.metric(
+        "Average Match",
+        "89%"
+    )
+
+    st.divider()
+
+    st.subheader("🎯 Recommended Buyer Matches")
+
+    for buyer in buyers:
+
+        with st.container(border=True):
+
+            c1, c2, c3 = st.columns(
+                [2.4, 1, 0.8]
+            )
+
+            with c1:
+
+                st.markdown(
+                    f"### 🏢 {buyer['name']}"
+                )
+
+                st.write(
+                    f"📍 {buyer['city']}"
+                )
+
+                st.caption(
+                    buyer["type"]
+                )
+
+            with c2:
+
+                st.metric(
+                    "Match",
+                    f"{buyer['score']}%"
+                )
+
+            with c3:
+
+                st.write("")
+
+                st.button(
+                    "View",
+                    key=f"view_{buyer['name']}"
+                )
+
+    st.divider()
+
+    st.subheader("🧠 Matching Factors")
+
+    factor_data = pd.DataFrame(
+        {
+            "Factor": [
+                "Product Category",
+                "Material",
+                "Price Range",
+                "Location",
+                "Craft Type",
+                "Buyer Preference"
+            ],
+            "Weight": [
+                25,
+                15,
+                20,
+                10,
+                15,
+                15
+            ]
+        }
+    )
+
+    fig = px.bar(
+        factor_data,
+        x="Factor",
+        y="Weight",
+        text="Weight",
+        title="Future AI Matching Model"
+    )
+
+    fig.update_traces(
+        textposition="outside"
+    )
+
+    fig.update_layout(
+        height=420
+    )
+
+    st.plotly_chart(
+        fig,
+        use_container_width=True
     )
 
 
@@ -581,5 +1276,10 @@ else:
 st.divider()
 
 st.caption(
-    "SIH26090 | ArtisanLink AI | AI/ML Prototype"
+    "🧵 ArtisanLink AI • SIH26090 • "
+    "Empowering traditional artisans through digital commerce"
+)
+
+st.caption(
+    "Phase 1 UI Prototype • AI integration will be added next"
 )
